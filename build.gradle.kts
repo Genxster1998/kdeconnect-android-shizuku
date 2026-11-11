@@ -75,10 +75,17 @@ android {
     }
     signingConfigs {
         getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            // The upstream debug keystore is no longer checked in; release
+            // APKs are signed in CI from a GitHub secret. While the file is
+            // absent, debug builds fall back to Android's standard
+            // auto-generated debug key.
+            val keystore = file("debug.keystore")
+            if (keystore.exists()) {
+                storeFile = keystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
     buildTypes {

@@ -2,10 +2,9 @@
 # CI for the kdeconnect-android-shizuku fork.
 #
 # Runs the unit tests, builds the release APK, and signs it with the
-# checked-in debug keystore so the artifact installs directly over a
-# previous debug-signed build (the same key every local install of this
-# fork uses). The upstream release flow stays unsigned; this artifact is
-# for personal testing only.
+# release keystore from the repository's GitHub secrets, so the artifact
+# installs directly over earlier installs of this fork. Fork pull
+# requests have no access to the secrets and get an unsigned APK.
 ##
 
 name: Build
@@ -48,20 +47,33 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease --no-daemon --console=plain
 
-      - name: Sign with the debug keystore
+      - name: Sign with the release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           APK="build/outputs/apk/release/kdeconnect-android-release-unsigned.apk"
           BT="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)"
-          "$BT/zipalign" -p -f 4 "$APK" "kdeconnect-android-release-signed.apk"
-          "$BT/apksigner" sign \
-            --ks debug.keystore --ks-pass pass:android \
-            --key-pass pass:android --ks-key-alias androiddebugkey \
-            "kdeconnect-android-release-signed.apk"
-          "$BT/apksigner" verify --print-certs "kdeconnect-android-release-signed.apk" | head -2
+          if [[ -n "$KEYSTORE_BASE64" ]]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+            "$BT/zipalign" -p -f 4 "$APK" "kdeconnect-android-release.apk"
+            "$BT/apksigner" sign \
+              --ks "$RUNNER_TEMP/release.keystore" \
+              --ks-pass "pass:$KEYSTORE_PASSWORD" \
+              --key-pass "pass:$KEY_PASSWORD" \
+              --ks-key-alias "$KEY_ALIAS" \
+              "kdeconnect-android-release.apk"
+            "$BT/apksigner" verify --print-certs "kdeconnect-android-release.apk" | head -2
+          else
+            echo "No signing secret available (fork pull request); uploading unsigned." >> "$GITHUB_STEP_SUMMARY"
+            "$BT/zipalign" -p -f 4 "$APK" "kdeconnect-android-release.apk"
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: kdeconnect-android-release-signed
-          path: kdeconnect-android-release-signed.apk
+          name: kdeconnect-android-release
+          path: kdeconnect-android-release.apk
           if-no-files-found: error
