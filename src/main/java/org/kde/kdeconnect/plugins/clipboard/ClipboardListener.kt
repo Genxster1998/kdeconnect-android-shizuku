@@ -185,7 +185,6 @@ class ClipboardListener {
             cm = context.getSystemService<ClipboardManager>()!!
             cm.addPrimaryClipChangedListener { this.onClipboardChanged() }
         }
-
         try {
             Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
             Log.d(TAG, "Registered Shizuku binder listener")
