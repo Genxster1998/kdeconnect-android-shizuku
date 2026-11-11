@@ -1,0 +1,67 @@
+##
+# CI for the kdeconnect-android-shizuku fork.
+#
+# Runs the unit tests, builds the release APK, and signs it with the
+# checked-in debug keystore so the artifact installs directly over a
+# previous debug-signed build (the same key every local install of this
+# fork uses). The upstream release flow stays unsigned; this artifact is
+# for personal testing only.
+##
+
+name: Build
+
+on:
+  push:
+    branches: [silent-edition]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Tests and release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon --console=plain
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease --no-daemon --console=plain
+
+      - name: Sign with the debug keystore
+        run: |
+          APK="build/outputs/apk/release/kdeconnect-android-release-unsigned.apk"
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)"
+          "$BT/zipalign" -p -f 4 "$APK" "kdeconnect-android-release-signed.apk"
+          "$BT/apksigner" sign \
+            --ks debug.keystore --ks-pass pass:android \
+            --key-pass pass:android --ks-key-alias androiddebugkey \
+            "kdeconnect-android-release-signed.apk"
+          "$BT/apksigner" verify --print-certs "kdeconnect-android-release-signed.apk" | head -2
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdeconnect-android-release-signed
+          path: kdeconnect-android-release-signed.apk
+          if-no-files-found: error

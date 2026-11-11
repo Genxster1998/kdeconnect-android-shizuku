@@ -2,10 +2,13 @@ package org.kde.kdeconnect.plugins.clipboard
 
 import android.app.Application
 import android.content.Context
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.Runs
 import io.mockk.mockkObject
 import io.mockk.spyk
 import io.mockk.verify
@@ -18,6 +21,7 @@ import org.kde.kdeconnect.Device
 import org.kde.kdeconnect.MockSharedPreference
 import org.kde.kdeconnect.NetworkPacket
 import org.kde.kdeconnect_tp.R
+import org.robolectric.Shadows.shadowOf
 
 @RunWith(AndroidJUnit4::class)
 class ClipboardPluginTest {
@@ -49,6 +53,7 @@ class ClipboardPluginTest {
 
         device = mockk {
             every { deviceId } returns "testDevice"
+            every { supportsPacketType(any()) } returns false
             every { sendPacket(any()) } answers {
                 packet = arg<NetworkPacket>(0)
             }
@@ -114,6 +119,44 @@ class ClipboardPluginTest {
         verify(exactly = 0) { clipboardListener.setText(content) }
     }
 
+    @Test
+    fun testReceiveLocalContentUriIsIgnored() {
+        val packet = NetworkPacket("kdeconnect.clipboard").apply {
+            set("content", "content://com.chrome.dev.FileProvider/images/screenshot/17940544564891603890348292716354.jpg")
+        }
+
+        // A content:// URI is only valid on the device that created it; syncing it
+        // as text must not touch the local clipboard.
+        Assert.assertFalse(clipboardPlugin.onPacketReceived(packet))
+        verify(exactly = 0) { clipboardListener.setText(any()) }
+    }
+
+    @Test
+    fun testReceiveClipboardFile() {
+        every { clipboardListener.setFile(any(), any()) } just Runs
+
+        val packet = NetworkPacket(ClipboardPlugin.PACKET_TYPE_CLIPBOARD_FILE).apply {
+            set("filename", "clipboard.png")
+            payload = NetworkPacket.Payload("PNG".toByteArray())
+        }
+
+        Assert.assertTrue(clipboardPlugin.onPacketReceived(packet))
+
+        // The plugin copies the payload on a background thread and then applies the
+        // file on the main thread, so flush the main looper until the file exists.
+        val receivedFile = java.io.File(context.cacheDir, "clipboard/clipboard.png")
+        val looper = shadowOf(Looper.getMainLooper())
+        val deadline = System.currentTimeMillis() + 2000
+        while (!receivedFile.isFile && System.currentTimeMillis() < deadline) {
+            looper.idle()
+            Thread.sleep(10)
+        }
+        looper.idle()
+
+        Assert.assertTrue(receivedFile.isFile)
+        verify { clipboardListener.setFile(any(), any()) }
+    }
+
     @Test(expected = UnsupportedOperationException::class)
     fun testReceiveInvalidPacket() {
         val invalidPacket = NetworkPacket("invalid.type")
@@ -177,4 +220,23 @@ class ClipboardPluginTest {
         Assert.assertEquals("kdeconnect.clipboard", sentPacket.type)
         Assert.assertEquals(content, sentPacket.getString("content"))
     }
+
+    @Test
+    fun testPropagateClipboardFileUsesFilePacket() {
+        val file = java.io.File(context.cacheDir, "clipboard.png").apply {
+            writeBytes(byteArrayOf(1, 2, 3, 4))
+        }
+        every { device.supportsPacketType(ClipboardPlugin.PACKET_TYPE_CLIPBOARD_FILE) } returns true
+
+        clipboardPlugin.propagateClipboardFile(
+            ClipboardListener.ClipboardFile(file, "clipboard.png", "image/png", file.length()),
+        )
+
+        val sentPacket = checkNotNull(packet)
+        Assert.assertEquals(ClipboardPlugin.PACKET_TYPE_CLIPBOARD_FILE, sentPacket.type)
+        Assert.assertEquals("clipboard.png", sentPacket.getString("filename"))
+        Assert.assertEquals(file.length(), sentPacket.payloadSize)
+        sentPacket.payload?.close()
+    }
+
 }

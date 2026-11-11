@@ -12,13 +12,23 @@ master commit `3c2706a1`, and builds on Shoukaku39's earlier Shizuku clipboard w
   Shizuku dependencies, provider, permission handling, and startup initialization.
 - Integration with upstream's Kotlin clipboard listener, including propagation of
   Android's sensitive-clipboard flag so the existing privacy preference still applies.
+- Image clipboard sync. Copying an image (for example a screenshot or a picture in
+  Chrome) sends the image bytes with the `kdeconnect.clipboard.file` packet, the
+  same protocol used by KDE Connect for the desktop. Received images are stored in
+  the app cache and placed on the Android clipboard as a `content://` URI, so
+  pasting works in any app. Device-local `content://` URIs are never synced as
+  clipboard text, which also removes the clipboard echo loop where a desktop
+  client sent the URI back to the phone. The remote client must advertise the
+  `kdeconnect.clipboard.file` capability; otherwise images are skipped.
 
 The normal KDE Connect features are retained. The existing READ_LOGS clipboard
 path remains available as a fallback when Shizuku is unavailable or unauthorized;
 the app does not need READ_LOGS permission when the Shizuku service is used.
 
 Compared with the earlier Shizuku fork, this implementation uses a dedicated
-Shizuku user service and AIDL callbacks for privileged clipboard reads.
+Shizuku user service and AIDL callbacks for privileged clipboard reads. The
+privileged service streams image clips to the app as file descriptors, so
+background image sync does not depend on the app holding clipboard focus.
 
 ## 1.36.0 release
 
